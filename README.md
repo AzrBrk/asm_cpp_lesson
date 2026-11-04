@@ -17,6 +17,7 @@
 | [`notes/lesson01-extended-asm.md`](notes/lesson01-extended-asm.md) | Lesson 1 全部知识点：占位符、约束符、AT&T vs Intel、clobber、立即数编码 |
 | [`notes/lesson01-deep-dive.md`](notes/lesson01-deep-dive.md) | Lesson 1 补讲：约束串文法、`&`、修饰符全集、宽度模型、立即数编码、`"m"`、ABI |
 | [`notes/lesson02-clobber.md`](notes/lesson02-clobber.md) | Lesson 2 教案 v2：clobber / `"memory"` / `"cc"` / `rdtsc`（未开讲） |
+| [`notes/inline-asm-ub.md`](notes/inline-asm-ub.md) | 横切：UB 边界（L0 硬错误 / L1 契约 / L2 未指定 / L3 真 UB） |
 | [`notes/lesson03-stack-registers.md`](notes/lesson03-stack-registers.md) | Lesson 3：栈帧、红区、对齐、callee-saved、状态清单 |
 | [`notes/lesson04-early-clobber.md`](notes/lesson04-early-clobber.md) | Lesson 4：多输出、固定寄存器、数字匹配、`asm goto` |
 | [`notes/lesson05-calling-convention.md`](notes/lesson05-calling-convention.md) | Lesson 5：两套 ABI、隐藏指针、`%al`、`.cfi`/`.seh` |

@@ -92,6 +92,9 @@
 **复现不了 ≠ 安全**：`&` 和 `"memory"` 能稳定复现错值，`"cc"` 不一定
 （见 [Lesson 2 §3.4](lesson02-clobber.md)）—— 这是 UB 的两种面孔。
 
+横切的分类表在 [`inline-asm-ub.md`](inline-asm-ub.md)：L0 硬错误 / L1 GCC 契约 /
+L2 未指定 / L3 C++ UB。判断"这段 asm 是不是 UB"时先查那张表。
+
 ---
 
 ## 6. 环境
