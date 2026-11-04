@@ -10,6 +10,7 @@
 
 | 路径 | 内容 |
 |---|---|
+| [`AGENTS.md`](AGENTS.md) | 给接手这个仓库的 AI 的教学协议：角色、硬性约定、提交格式、评分口径、当前进度 |
 | [`lessons/lesson01/main.cpp`](lessons/lesson01/main.cpp) | Lesson 1 作业：`bswap64_asm` / `rotl64_asm` / `mask_imm_asm` |
 | [`notes/lesson01-extended-asm.md`](notes/lesson01-extended-asm.md) | Lesson 1 全部知识点：占位符、约束符、AT&T vs Intel、clobber、立即数编码 |
 | [`notes/lesson02-clobber.md`](notes/lesson02-clobber.md) | Lesson 2 进度：clobber 的「承诺 + 销毁」语义（进行中） |
