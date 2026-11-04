@@ -12,8 +12,10 @@
 |---|---|
 | [`AGENTS.md`](AGENTS.md) | 给接手这个仓库的 AI 的教学协议：角色、硬性约定、提交格式、评分口径、当前进度 |
 | [`lessons/lesson01/main.cpp`](lessons/lesson01/main.cpp) | Lesson 1 作业：`bswap64_asm` / `rotl64_asm` / `mask_imm_asm` |
+| [`demos/hello-switch/`](demos/hello-switch/) | 最小上下文切换 demo：两个函数各自用栈，交替打印 `hello world` |
 | [`notes/lesson01-extended-asm.md`](notes/lesson01-extended-asm.md) | Lesson 1 全部知识点：占位符、约束符、AT&T vs Intel、clobber、立即数编码 |
-| [`notes/lesson02-clobber.md`](notes/lesson02-clobber.md) | Lesson 2 进度：clobber 的「承诺 + 销毁」语义（进行中） |
+| [`notes/lesson01-deep-dive.md`](notes/lesson01-deep-dive.md) | Lesson 1 补讲：约束串文法、`&`、修饰符全集、宽度模型、立即数编码、`"m"`、ABI |
+| [`notes/lesson02-clobber.md`](notes/lesson02-clobber.md) | Lesson 2 教案 v2：clobber / `"memory"` / `"cc"` / `rdtsc`（未开讲） |
 | [`notes/faq.md`](notes/faq.md) | 练习中提出的问题与解答 |
 | [`progress.md`](progress.md) | 课程表、评分记录、易错点清单 |
 
