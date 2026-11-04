@@ -95,16 +95,19 @@ lessons/lessonNN/main.cpp     每课作业的定稿
 | 课 | 状态 | 最佳分 |
 |---|---|---|
 | Lesson 1 — Extended Asm 基本语法与约束符 | ✅ 通过（4 次尝试） | 88（90 / 85 / 88） |
-| Lesson 2 — Clobber List：`memory` 屏障与 `cc` | 🟡 进行中，仅讲了知识点 1 | — |
-| 其余 | ⬜ 未开始 | — |
+| Lesson 2 — Clobber List：`memory` 屏障与 `cc` | 🟡 教案 v2 已就绪，未开讲 | — |
+| Lesson 3–9 + 5.5 桥 | 📝 教案 v1 已就绪，未开讲 | — |
 
-**下一步**：Lesson 2 知识点 2（`"memory"` 是编译器屏障）、知识点 3（`"cc"` 的边界）、知识点 4（`rdtsc` 的固定寄存器约束），然后才是任务。
+**下一步**：按 [`notes/course-map.md`](notes/course-map.md) 从 Lesson 2 知识点 1 开始讲。
+教案已经扩写，`rdtsc` 那节纠正了 v1 的错误（它**不**写 EFLAGS，不需要 `"cc"`）。
+开讲时仍然一次只讲一个知识点（教案是材料，不是讲稿）。
 
 **Lesson 1 遗留的账**（别忘）：
 
 - `main()` 里没有独立参考值比对，验证靠肉眼。
 - `#ifdef ERROR0` 的失败实验引用未声明的 `m`，打开只会撞 undeclared identifier。
-- 待答：`rotl64_asm` 把 `"c"(n)` 换成 `"r"(n)` 会产出什么？
+- ~~`rotl64_asm` 把 `"c"(n)` 换成 `"r"(n)`~~ —— 已由
+  [`notes/lesson01-deep-dive.md`](notes/lesson01-deep-dive.md) §4 结清。
 
 ---
 

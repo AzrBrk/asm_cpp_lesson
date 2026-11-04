@@ -1,6 +1,6 @@
 # 协程底层训练 — 学习进度
 
-- 当前课：**Lesson 2 — Clobber List：memory 屏障与 cc**（进行中）
+- 当前课：**Lesson 2 — Clobber List：memory 屏障与 cc**（教案 v2 就绪，未开讲）
 - 已通过：1 / 9
 - 环境：g++ (MinGW-w64)、`-std=gnu++17 -O2 -Wall -Wextra`、AT&T 语法
 
@@ -9,8 +9,9 @@
 | # | 课 | 状态 | 尝试 | 最佳分 |
 |---|---|---|---|---|
 | 1 | Extended Asm 基本语法与约束符 | ✅ 通过 | 4 | 88 |
-| 2 | Clobber List：memory 屏障与 cc | 🟡 进行中 | 0 | — |
-| 3–9 | 待开 | ⬜ 未开始 | 0 | — |
+| 2 | Clobber List：memory 屏障与 cc | 🟡 教案就绪，未开讲 | 0 | — |
+| 3–9 | 教案 v1 就绪，见 `notes/course-map.md` | 📝 未开讲 | 0 | — |
+| 5.5 | naked / `.S`（过渡课） | 📝 教案就绪，未开讲 | 0 | — |
 
 ## 评分记录
 
