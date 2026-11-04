@@ -88,12 +88,72 @@ GCC 分配的是**和 C 类型同宽**的寄存器；`q` 后缀是你手写的�
 
 ---
 
-## Q4（待答）：`rotl64_asm` 里把 `"c"(n)` 换成 `"r"(n)` 会怎样？
+## Q4（已答）：`rotl64_asm` 里把 `"c"(n)` 换成 `"r"(n)` 会怎样？
 
-留给自己的家庭作业。提示：`rol` 的计数操作数在编码里只有两种形态——`imm8`，或者**硬编码的 `%cl`**，没有"任意 r64 当计数"这条编码。改完把编译错误原样留存。
+答案在 [`lesson01-deep-dive.md` §4](lesson01-deep-dive.md)：`%b` 只是"取该寄存器所在的字节名"，
+不搬运数据。`"r"(n)` 下实测展开成 `rolq %sil, %rax`，汇编器报
+`Error: operand type mismatch for 'rol'` —— 因为 `rol` 的计数只接受 `imm8` 或 `%cl`。
+
+想自己再撞一次的话：改完留好报错原文。
 
 ---
 
 ## Q5（待答）：为什么 `bad_store` 有时"看起来是对的"，却仍是 UB？
 
 Lesson 2 的问题，等 `"memory"` 屏障讲完再答。
+
+---
+
+## Q6：学过 x86 汇编，为什么还是看不懂一个 `printf` 调用？
+
+**问题**：指令都认识（`mov`/`lea`/`call`），但看到 `printf` 那几行就不知道在干什么。
+
+**答**：因为 `printf` 调用点是 **ABI 的"全考点"**，指令本身只占一行。
+把 `-S` 拉出来看：
+
+```cpp
+void show(int i, double d) {
+    std::printf("%d %.2f\n", i, d);
+}
+```
+
+SysV（Linux）——注意 Ubuntu 上是 `__printf_chk`，不是 `printf`：
+
+```asm
+show:
+    movl  %edi, %edx          # i：第 3 个参数 → rdx
+    leaq  .LC0(%rip), %rsi    # 格式串："%d %.2f\n" → rsi（第 2 个参数）
+    movl  $2, %edi            # __printf_chk 的 flag（_FORTIFY_SOURCE）
+    movl  $1, %eax            # 用了 1 个向量寄存器（d 在 xmm0）
+    jmp   __printf_chk@PLT    # 尾调用，不是 call
+```
+
+MinGW（MS x64）：
+
+```asm
+show:
+    movl   %ecx, %edx         # i：第 2 个参数 → rdx
+    movq   %xmm1, %r8         # d 复制进第 3 个参数对应的 GPR
+    movupd %xmm1, %xmm2       # 同时放进第 3 个参数对应的 XMM
+    leaq   .LC0(%rip), %rcx   # 格式串 → rcx（第 1 个参数）
+    jmp    _Z6printfPKcz      # 尾调用
+```
+
+一个"普通"的 `printf` 调用，考了七件事：
+
+| # | 考点 | 在这段里长什么样 |
+|---|---|---|
+| 1 | 参数顺序与位置 | 格式串、`i`、`d` 各去哪 |
+| 2 | 两个寄存器文件 | 整数走 GPR，`double` 走 `xmm` |
+| 3 | 可变参数的 `%al` | SysV 的 `movl $1, %eax` |
+| 4 | MS 的 varargs 双写规则 | `movq %xmm1, %r8` + `movupd %xmm1, %xmm2` |
+| 5 | libc 的包装 | `__printf_chk`（fortify）、`_Z6printfPKcz`（C++ 名字） |
+| 6 | PIC/PLT | `.LC0(%rip)`、`@PLT` |
+| 7 | 尾调用与对齐 | 直接 `jmp`，没有 `call`/`ret` |
+
+这些**不是指令知识**，是"编译器与运行时的合同"。只学指令表，就会卡在这里 ——
+这跟聪不聪明无关，是材料少了一块。本课程的 Lesson 3（栈）、Lesson 5（调用约定）、
+Lesson 5.5（符号/链接）就是补这一块。
+
+顺带：你想真正"看懂 `printf`"，看到调用点就够了；`printf` 内部怎么解析格式串是 libc
+的实现细节，不是这门课的目标。
