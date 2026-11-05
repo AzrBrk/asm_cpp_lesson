@@ -67,7 +67,7 @@ README.md                     仓库说明与进度表
 progress.md                   课程表、评分记录、易错点清单（滚动更新）
 notes/faq.md                  学习者真实卡住过的问题与解答
 notes/lesson01-extended-asm.md  Lesson 1 知识点 + 四个版本的 -S 对照
-notes/lesson02-clobber.md      Lesson 2（进行中，只到知识点 1）
+notes/lesson02-clobber.md      Lesson 2 备课材料（完整，尚未开讲）
 lessons/lessonNN/main.cpp     每课作业的定稿
 ```
 
@@ -95,11 +95,13 @@ lessons/lessonNN/main.cpp     每课作业的定稿
 | 课 | 状态 | 最佳分 |
 |---|---|---|
 | Lesson 1 — Extended Asm 基本语法与约束符 | ✅ 通过（4 次尝试） | 88（90 / 85 / 88） |
-| Lesson 2 — Clobber List：`memory` 屏障与 `cc` | 🟡 教案 v2 已就绪，未开讲 | — |
-| Lesson 3–9 + 5.5 桥 | 📝 教案 v1 已就绪，未开讲 | — |
+| Lesson 2 — Clobber List：`memory` 屏障与 `cc` | 🟡 已补学习闭环与勘误，未开讲 | — |
+| Lesson 3–9 + 5.5 桥 | 📝 已补推导、任务验收与平台边界，未开讲 | — |
 
 **下一步**：按 [`notes/course-map.md`](notes/course-map.md) 从 Lesson 2 知识点 1 开始讲。
-教案已经扩写，`rdtsc` 那节纠正了 v1 的错误（它**不**写 EFLAGS，不需要 `"cc"`）。
+教案已补前置检查、逐点停止位置、任务验收和查证入口。
+`rdtsc` 不写 EFLAGS；GCC x86 的隐式 flags clobber 见 Lesson 2 §3.4，
+不再要求复现“漏 cc 错码”。历史 demo 不是 Windows ABI 安全参考，先读其 README 勘误。
 开讲时仍然一次只讲一个知识点（教案是材料，不是讲稿）。
 
 **Lesson 1 遗留的账**（别忘）：
@@ -121,7 +123,7 @@ lessons/lessonNN/main.cpp     每课作业的定稿
 - `"i"` 传运行期变量 → `impossible constraint in 'asm'`。
 - `"+r"` 把输入输出绑成同一个操作数，能消掉模板里那句 `movq %1, %0`；`"=r"` 配上 `movq %1,%0` 在某些分配下会退化成 `movq %rbx,%rbx`。
 - `rol` / `shl` 的计数**只接受 `imm8` 或 `%cl`**，没有"任意 r64 当计数"的编码；`unsigned n` 的 `%1` 展开是 `%ecx`，要写 `%b1` 取 `%cl`。
-- x86-64 没有 64 位立即数的 `mov` 编码，汇编器会把 `movq $imm64` 换成 `movabsq`。
+- x86-64 有 `mov r64, imm64` 编码；GAS 用 `movabsq` 表示该形式，不能误说没有 imm64。
 
 ---
 
@@ -130,7 +132,7 @@ lessons/lessonNN/main.cpp     每课作业的定稿
 - ❌ 一次性把一课讲完；❌ 直接给完整可编译答案。
 - ❌ 不看证据就说"对了"；❌ 用"更好/更清晰"这类无法量化的评语。
 - ❌ 编造编译器行为、指令语义、编码长度。查文档，或者明确说"这条我需要你贴 `-S` 确认"。
-- ❌ 开启 `-masm=intel`；❌ 用 `"memory"` 当万能药（它会把缓存值全打回内存，性能极差，且挡不住寄存器层面的重排）。
+- ❌ 开启 `-masm=intel`；❌ 用 `"memory"` 当万能药（会限制相关内存优化，但不强制所有值写回，也不约束全部纯寄存器运算；代价看 `-S`）。
 - ❌ 把 clobber 列表写成 C 变量名（那是输出操作数的事）。
 
 ---

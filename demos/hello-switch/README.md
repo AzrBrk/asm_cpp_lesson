@@ -2,6 +2,13 @@
 
 一个文件、一个切换函数、两段私有的栈。
 
+> **课程勘误：这是历史 GPR-only 观察 demo，不是 Windows x64 ABI 安全实现。**
+> 除 XMM/控制字与 TEB 状态外，初始 `top-80` 布局没有给 Windows 用户入口留下
+> 32 字节 home slots；正常 return 到普通 C++ `fiber_exit` 还存在 8 字节入口对齐错误。
+> 后者当前死循环路径不会执行，但不能据此作为完成路径作业答案。
+> 代码此处保留作对照；Windows 主线必须按 [Lesson 6](../../notes/lesson06-stack-switch.md)
+> 与 [Lesson 7](../../notes/lesson07-first-entry.md) 重建合同/布局，不能以“编译过了”判通过。
+
 两个函数 `fiber_a` / `fiber_b` 各自跑在自己的栈上，用 `ctx_switch` 互相跳：
 a 打印 `hello `，跳到 b；b 打印 `world`，跳回 a。三轮后 b 跳回 `main`。
 
@@ -12,7 +19,8 @@ hello world
 done
 ```
 
-没有调度器、没有链表、没有 `ucontext`。**整个"协程"就是一个 `rsp` 和 8 个寄存器。**
+没有调度器、没有链表、没有 `ucontext`。这里仅展示 `rsp` 与 8 个 GPR 的切换骨架，
+不是完整运行时状态清单。
 
 ## 编译运行
 
@@ -72,10 +80,11 @@ PE 在本机跑不了）。代码里没有任何平台 API，只有两个宏在�
 低地址
 ```
 
-第一次切到 a：`ctx_switch` 从 `sp` 开始 `pop` 8 个 0，然后 `ret` 到 `fiber_a`。
+这张图只适合作为 **SysV 的简化初始入口**对照。第一次切到 a：
+`ctx_switch` 从 `sp` 开始 `pop` 8 个 0，然后 `ret` 到 `fiber_a`。
 此时 `rsp = top - 8`，正好满足 ABI 的"函数入口 `rsp % 16 == 8`"。
 
-这就是"首次进入"（Lesson 7）的全部秘密：**伪造一个看起来像"刚被调用过"的栈。**
+这是首次进入的基础；Windows 还需 shadow space，正常退出需 trampoline 调整，见 Lesson 7。
 
 ## 为什么只存 8 个寄存器
 
@@ -86,13 +95,14 @@ PE 在本机跑不了）。代码里没有任何平台 API，只有两个宏在�
 | 必须保存 | `rbx rbp r12–r15` | `rbx rbp rsi rdi r12–r15` |
 | 可以随便写 | `rax rcx rdx rsi rdi r8–r11` | `rax rcx rdx r8–r11` |
 
-所以切换时保存"两台机器都必须保"的并集：`rbp rbx rsi rdi r12–r15`，共 8 个。
+所以 demo 保存 GPR 部分的并集：`rbp rbx rsi rdi r12–r15`，共 8 个。
 caller-saved 不用管 —— 编译器本来就没指望它们在调用后还活着。
 
 ## 为什么必须 `naked`
 
 普通函数 GCC 会插 prologue/epilogue，并且**假设 `rsp` 在函数体内不变**。
-这个函数中间就把 `rsp` 换了，只能写成 naked：只发模板里那段 asm，不生成任何额外指令。
+这个函数中间就把 `rsp` 换了，不能依赖编译器生成普通函数帧；
+可写 naked basic asm，也可用独立 `.S`，不是“只能 naked”。
 
 这也是 Lesson 2 那条规则的直接后果：**`rsp` 在 asm 前后必须一样**。
 所以要换栈，就不能用普通 extended asm。
@@ -103,6 +113,8 @@ caller-saved 不用管 —— 编译器本来就没指望它们在调用后还�
   这个 demo 全是整数和 stdio，没有浮点值跨切换存活；严格 ABI 安全要再压 160 字节。
 - **没有 unwind 信息**：naked 函数没写 `.seh_*`，异常穿过它就别想了。
 - **栈不会回收**：fiber 结束的路径只有 `fiber_exit` 一条，本 demo 用不到。
+- **Windows 入口缺 shadow space，退出入口对齐错误**：见顶部勘误，不只差 160 字节 XMM 保存。
+- **没有 CET 支持**：不能在启用硬件强制机制的环境下保证此 ret 切栈有效。
 
 ## 和课程的对应
 
@@ -122,6 +134,6 @@ caller-saved 不用管 —— 编译器本来就没指望它们在调用后还�
 
 1. 把 `if (++g_rounds == 3)` 改成 `5`、`10`，看输出。
 2. 在 `fiber_a` 里加一个局部变量 `int n = 0; ++n;`，打印它 —— 证明每个 fiber 的栈是独立的。
-3. 把 `ctx_switch` 里的 `popq %r12`/`popq %r13` 删掉，看 `-O2` 下会不会出错；
-   再想想为什么可能"碰巧没事"。
+3. 纸上分析删除一对 pop 的后果：不仅寄存器未恢复，`rsp` 还少推进 16 字节，
+   ret 会把保存槽当地址。不要把它当“只漏恢复寄存器”的隔离实验。
 4. 加第三个 fiber，把 `g_sp_*` 换成数组 —— 这就是 Lesson 8 的调度器。

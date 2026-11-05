@@ -11,7 +11,7 @@
 | 路径 | 内容 |
 |---|---|
 | [`AGENTS.md`](AGENTS.md) | 给接手这个仓库的 AI 的教学协议：角色、硬性约定、提交格式、评分口径、当前进度 |
-| [`notes/course-map.md`](notes/course-map.md) | 课程地图：三级台阶（内联 → naked → `.S`）、九课依赖、每课证据 |
+| [`notes/course-map.md`](notes/course-map.md) | 从这里读：前置关系、逐点学习闭环、工具命令、证据格式与官方查证入口 |
 | [`lessons/lesson01/main.cpp`](lessons/lesson01/main.cpp) | Lesson 1 作业：`bswap64_asm` / `rotl64_asm` / `mask_imm_asm` |
 | [`demos/hello-switch/`](demos/hello-switch/) | 最小上下文切换 demo：两个函数各自用栈，交替打印 `hello world` |
 | [`notes/lesson01-extended-asm.md`](notes/lesson01-extended-asm.md) | Lesson 1 全部知识点：占位符、约束符、AT&T vs Intel、clobber、立即数编码 |
@@ -25,7 +25,7 @@
 | [`notes/lesson06-stack-switch.md`](notes/lesson06-stack-switch.md) | Lesson 6：`ctx_switch`、保存集合、栈分配、TEB/红区 |
 | [`notes/lesson07-first-entry.md`](notes/lesson07-first-entry.md) | Lesson 7：假帧、对齐账、传参、`jmp` vs `ret` |
 | [`notes/lesson08-minimal-scheduler.md`](notes/lesson08-minimal-scheduler.md) | Lesson 8：Fiber 结构、RR 调度、不变量、guard page |
-| [`notes/lesson09-boost-context.md`](notes/lesson09-boost-context.md) | Lesson 9：逐段对照 `jump_fcontext` / `make_fcontext` |
+| [`notes/lesson09-boost-context.md`](notes/lesson09-boost-context.md) | Lesson 9：固定 Boost 1.86.0，先读 MinGW 的 MS/PE/GAS 实现，再对照 SysV |
 | [`notes/faq.md`](notes/faq.md) | 练习中提出的问题与解答 |
 | [`progress.md`](progress.md) | 课程表、评分记录、易错点清单 |
 
@@ -39,6 +39,10 @@
 | 5.5 | naked / `.S`（新增过渡课） | 📝 教案就绪，未开讲 | — |
 
 ## 约定
+
+教案已补充逐点停止位置、地址/读写时序推导、任务证据和平台边界；
+补全材料**不改变已通过课程和评分**。当前仍从 Lesson 2 知识点 1 开讲。
+旧 demo 只作 GPR 切换观察，不是 Windows ABI 安全参考；缺项见其 README 顶部勘误。
 
 1. 每段 asm 都必须能被 `-S` 解释清楚：哪条指令来自模板、哪个寄存器是分配器挑的、哪条是编译器插的。
 2. 判定对错只看 `fiber_submit` 的编译/运行/`-S` 报告，不靠肉眼读代码。

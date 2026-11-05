@@ -1,9 +1,24 @@
 # Lesson 5.5 教案 — 从 Extended Asm 走到 naked / `.S`
 
-> **状态：教案 v1，未开讲。这一节是原九节课里缺的"桥"。**
+> **状态：已补工具链与平台勘误，未开讲。这一节是“桥”。**
 > 前置：Lesson 3–5（栈、保存责任、调用约定）。
 > 本课目标：把"内联汇编"和"独立汇编程文件"之间的那道坎补上 —— 之后 Lesson 6 的栈切换
 > 才有地方落脚。
+
+---
+
+## 开讲拆分
+
+| 顺序 | 这次只做什么 | 证据/停止点 |
+|---|---|---|
+| 1 | 区分 basic/extended asm | 解释为什么裸函数里用 `%rax` 而不是 `%%rax`，不能写操作数列表 |
+| 2 | 连通 C++ 声明与 `.S` 符号 | 两个 `.o` 的 `nm`：调用方 `U`、实现方 `T`，名字一致 |
+| 3 | 写一个不调用别人的叶子 asm 函数 | `objdump` 与边界测试；只需本机 MinGW |
+| 4 | 在 `.S` 中调用 C | `call` 前 `rsp%16==0`，MS 出站 shadow space 实际存在 |
+| 5 | 理解 unwind 元数据 | 比较普通编译器函数的 `.seh_*`；不先手写跨栈 unwind |
+
+默认先选 **`.S` 作为后续作业载体**：符号与帧都可直接检查。`naked` 作为对照，
+不要求维护两套切换原语。只要指令集/ABI 不同就分平台，不宣称宏换两个寄存器即可通用。
 
 ---
 
@@ -67,7 +82,7 @@ _ZN...ctx_switchEPPvS0_:
 | 只能用 **basic asm**（没有操作数） | 参数不能用名字，只能自己知道 ABI 寄存器 |
 | 函数体里不能有普通 C 语句 | 不能 `return`、不能声明局部变量 |
 | 没有 prologue/epilogue | callee-saved 要自己存、栈对齐要自己算 |
-| 没有 unwind 信息 | 异常/调试器穿过它会出问题 |
+| 不会自动描述手写帧的 unwind 信息 | 即使看到 `.seh_proc` 也不证明手写 push 已被描述 |
 | 编译器不做寄存器分配 | 你写什么就是什么 |
 
 **参数怎么拿**：按 ABI 直接读寄存器，用宏区分平台：
@@ -116,17 +131,17 @@ asm_add:
 C++ 侧：
 
 ```cpp
-extern "C" long asm_add(long, long);
+extern "C" std::uint64_t asm_add(std::uint64_t, std::uint64_t); // 配套 leaq 是 64 位模加法
 ```
 
 编译命令（**`.S` 大写，走预处理器**；`.s` 小写不走）：
 
 ```bash
-g++ -O2 main.cpp add.S -o a.out        # Linux
-g++ -O2 main.cpp add.S -o a.exe        # MinGW
+g++ -std=gnu++17 -O2 -Wall -Wextra main.cpp add.S -o main.exe # MinGW；Linux 仅改输出名
 ```
 
-实测两边都能跑/链接，`nm` 里符号是 `asm_add`（没被 C++ 修饰）。
+历史记录只支持 Linux 运行与 MinGW 编译/链接，不代表 Windows 运行已验证。
+`nm` 中应看到 `asm_add`，但仍要检查类型宽度与调用约定。
 
 ### 逐行解释
 
@@ -201,7 +216,8 @@ leaq  symbol(%rip), %rax      # 推荐：RIP 相对，PIC 安全
 movq  $symbol, %rax           # 绝对重定位，PIE 下会被链接器抱怨
 ```
 
-MinGW 默认也生成 PIE/PIC 友好的代码，取全局变量地址用 `leaq sym(%rip)` 最稳。
+MinGW 的 PE 重定位与 Linux PIE 不是同一机制。本模块内符号可用 RIP 相对寻址；
+导入数据可能经 IAT 间接访问，不能对所有外部符号一律套 `lea`。
 
 ---
 
@@ -214,7 +230,7 @@ MinGW 默认也生成 PIE/PIC 友好的代码，取全局变量地址用 `leaq s
 1. 入口 `rsp % 16 == 8`；
 2. 用了 callee-saved 就存/恢复；
 3. 返回值放 `rax`（浮点 `xmm0`）；
-4. 不碰 red zone（SysV 上尤其）。
+4. SysV 若用红区，只放不跨普通调用存活的值；MS x64 不用红区。
 
 ### asm → C
 
@@ -223,20 +239,37 @@ MinGW 默认也生成 PIE/PIC 友好的代码，取全局变量地址用 `leaq s
 1. **调用前 `rsp % 16 == 0`**（你负责把账算平）；
 2. MS x64 还要预留 32 字节 shadow space；
 3. caller-saved 的值调用后就没了；
-4. 可变参数要设 `%al`。
+4. **SysV** 可变参数设置 `%al`；MS 用浮点参数双写规则，见 Lesson 5。
 
-一个最简单的对齐模板（进入时 `rsp % 16 == 8`）：
+下面仅作 **MS x64 无参数调用的局部布局示意**；省略 `.seh`，不是完整作业答案：
 
 ```asm
 my_func:
-    pushq %rbp              # 8 字节 → 现在 %16 == 0，可以 call
-    movq  %rsp, %rbp
-    call  some_c_function
-    popq  %rbp
+    subq  $40, %rsp         # 32 字节出站 shadow + 8 字节对齐；进入时是 8 mod 16
+    call  some_c_function   # 参数准备、volatile 寄存器与 unwind 仍需分别处理
+    addq  $40, %rsp         # 恢复到自己的返回地址
     ret
 ```
 
-`push` 一个 8 字节寄存器，恰好把 `8` 补成 `0` —— 这就是"为什么序言总先 push rbp"。
+只 push 一个 `rbp` 虽能改对余数，**不能替 MS 分配 32 字节 shadow space**。
+本函数入站的 home slots 在入口返回地址上方；向下调用时还需在当前 `rsp` 处留出站区域，
+否则被调函数可能覆盖你的保存槽/返回地址。SysV 无 shadow，可采用不同布局。
+
+### 5.1 独立编译排错，不把三层错误混在一起
+
+```bash
+# C++ 调用方与汇编实现分别生成目标文件，均使用同一目标工具链
+g++ -std=gnu++17 -O2 -Wall -Wextra -c main.cpp -o main.o
+g++ -c add.S -o add.o
+nm main.o add.o
+objdump -dr add.o
+g++ main.o add.o -o main.exe
+```
+
+`undefined reference` 先比符号名和目标架构；`operand mismatch` 看位宽与指令形式；
+结果错才查输入/输出/ABI。不要在链接失败时去乱加 clobber。
+GNU GAS 源若后缀是 `.asm`，GCC 可能不自动识别；需按工程规则指定
+`-x assembler-with-cpp`，不是把 MASM 文件改个后缀就能交给 GAS。
 
 ---
 
@@ -260,16 +293,18 @@ my_func:
 
 ### 任务 A：第一个 `.S`
 
-写 `asm_max(long, long)`，返回较大值：
+写 `asm_max(std::int64_t, std::int64_t)`，返回较大值：
 
 - Linux 和 MinGW 共用一份 `.S`（用 `#if defined(_WIN32)` 分寄存器）；
 - C++ 侧 `extern "C"`；
-- 提交两边的 `nm`、`objdump -d` 和运行结果。
+- 主线提交 MinGW 的 `nm`、`objdump -dr` 和运行结果，另一 ABI 为选做。
+- 用独立 C++ 比较验证：负数、零、相等、`INT64_MIN/MAX`，避免只测正数把 signed/unsigned 混淆藏住。
 
 ### 任务 B：加 CFI
 
-给任务 A 的函数加 `.cfi_startproc/.cfi_endproc`，再用 `gdb` 在它里面 `bt`，
-确认栈能回溯。然后故意删掉 CFI，看 `bt` 变成什么样。
+先识别平台：MinGW 学 `.seh`，Linux 选做 `.cfi`。
+从一个普通 C++ 非叶子函数的输出中圈出帧变动和对应元数据。
+叶子函数即使没元数据也可能被回溯器推断出来；删 CFI 后 `bt` 仍正常不能证明 CFI 无用。
 
 ### 任务 C：asm 调 C
 
@@ -277,7 +312,8 @@ my_func:
 
 - 对齐算对（需要时 `subq $8, %rsp`）；
 - MinGW 下预留 32 字节 shadow space；
-- 说明 `%al` 要不要设。
+- 说明 `%al` 仅属于 SysV；本题 `long` 在 Windows 上是 32 位，`%ld` 必须匹配它。
+  若改为 `int64_t`，同步改声明和格式串，不能只把寄存器换成 64 位。
 
 ### 任务 D：naked 版
 

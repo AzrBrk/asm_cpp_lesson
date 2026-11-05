@@ -10,7 +10,9 @@
 
 **答**：`"cc"` 是 **condition code register**，指整个 EFLAGS，不是 carry flag。GCC 文档里的 `"cc"` 从来没有"进位"的意思。
 
-EFLAGS 里跟优化器相关的至少六位：CF(0) 进位、PF(2) 奇偶、ZF(6) 零、SF(7) 符号、OF(11) 溢出、DF(10) 方向。你写的每一个 `if (x == 0)` 读的是 **ZF**，`x < 0` 读 SF，有符号比较读 OF/SF/ZF —— CF 反而用得最少。
+常用算术条件位是 CF(0)、PF(2)、AF(4)、ZF(6)、SF(7)、OF(11)。
+条件跳转具体读哪些位取决于指令；DF(10) 控制串指令方向，不是普通算术条件码。
+声明 `"cc"` 不能替你恢复 ABI 要求的 DF 状态。
 
 Intel SDM 对 `AND`/`OR`/`XOR`/`TEST` 的规定是硬的：**OF 和 CF 清零，SF/ZF/PF 按结果设置，AF 未定义**。所以 `and` 至少改了 5 个位。
 
@@ -18,9 +20,12 @@ Intel SDM 对 `AND`/`OR`/`XOR`/`TEST` 的规定是硬的：**OF 和 CF 清零，
 
 **反例最能说明问题**：`INC`/`DEC` 修改 OF、SF、ZF、AF、PF，**唯独不动 CF**。所以 `inc` 一个进位都不产生，照样必须写 `"cc"`。
 
-漏写 `"cc"` 的后果：GCC 把 EFLAGS 视为隐式寄存器 `reg:CC`，没声明就是"这条 asm 前后 flags 不变"，调度器于是可以把 `cmp`/`test` 提到 asm 前面复用，或者把 asm 后面的条件跳转当成还基于旧的 flags —— 静默的 miscompile。
+`"cc"` 显式声明条件码破坏。本课程要求写全，但不能说省略它后所有编译器都假设 flags 不变：
+GCC 13 的 x86 后端在没有 flag output 时会隐式加入 flags clobber，
+见 [Lesson 2 §3.4](lesson02-clobber.md)。旧稿把未复现的错码归因于漏 cc，证据不足。
 
-**判据**：不写 flags 的只有 `mov` / `lea` / `push` / `pop` / `bswap` / `nop` / `cmov` / `not`（`not` 不改 flags）；`add` `sub` `and` `or` `xor` `test` `cmp` `shl` `shr` `rol` `imul` `inc` `dec` 全都要写。
+**判据**：检查具体指令的 SDM *Flags Affected*，不要把这里列出的常见指令当完整清单；
+普通 `mov/lea/bswap/not` 不改算术 flags，`pushfq/popfq` 等不能套普通 push/pop 的规则。
 
 ---
 
@@ -98,9 +103,12 @@ GCC 分配的是**和 C 类型同宽**的寄存器；`q` 后缀是你手写的�
 
 ---
 
-## Q5（待答）：为什么 `bad_store` 有时"看起来是对的"，却仍是 UB？
+## Q5：为什么 `bad_store` 有时“看起来是对的”，仍是错误？
 
-Lesson 2 的问题，等 `"memory"` 屏障讲完再答。
+`"r"(p)` 只声明地址值，未声明模板写入 `*p`。优化器仍可合并/搬动 C++ 中的读取；
+这份接口不能覆盖实际副作用。错误是否显现受内联、别名分析、优化级别影响。
+修复应精确声明内存输出或确有必要时用 `"memory"`，不是加 `volatile int*` 掩盖。
+详见 [Lesson 2 §2](lesson02-clobber.md)。这一答案是备课材料，不表示知识点已开讲/通过。
 
 ---
 
