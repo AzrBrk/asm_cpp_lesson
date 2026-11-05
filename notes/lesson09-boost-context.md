@@ -1,271 +1,210 @@
-# Lesson 9 教案 — 与 `boost.context` 对照
+# Lesson 9 教案 — 用自己的模型读 `boost.context`
 
-> **状态：教案 v1，未开讲。**
-> 前置：Lesson 6–8（切换、首次进入、调度器）。
-> 本课目标：把 [`jump_x86_64_sysv_elf_gas.S`](https://github.com/boostorg/context/blob/develop/src/asm/jump_x86_64_sysv_elf_gas.S)
-> 逐行读懂，并说清**我们的 demo 少了什么、为什么工业代码必须补上**。
+> **状态：已重写为 MinGW 主线，未开讲。**
+> 前置：Lesson 6 的保存合同、Lesson 7 的 trampoline、Lesson 8 的生命周期测试。
+> 目标不是背源码，而是回答：**每个字段谁写、谁读，哪个 ABI 条款要求它存在？**
 
 ---
 
-## 0. 先看接口
+## 0. 先固定版本与配置
+
+本文固定 **Boost 1.86.0** 的代码供阅读，不跟随 `develop` 漂移。
+这不是建议新工程安装旧版本，更不是对其所有可选分支的正确性背书。
+
+| 主线/对照 | 保存与恢复 | 首次构造 |
+|---|---|---|
+| **MS x64 / PE / GAS，主线** | [jump_x86_64_ms_pe_gas.asm](https://github.com/boostorg/context/blob/boost-1.86.0/src/asm/jump_x86_64_ms_pe_gas.asm) | [make_x86_64_ms_pe_gas.asm](https://github.com/boostorg/context/blob/boost-1.86.0/src/asm/make_x86_64_ms_pe_gas.asm) |
+| SysV / ELF / GAS，对照 | [jump_x86_64_sysv_elf_gas.S](https://github.com/boostorg/context/blob/boost-1.86.0/src/asm/jump_x86_64_sysv_elf_gas.S) | [make_x86_64_sysv_elf_gas.S](https://github.com/boostorg/context/blob/boost-1.86.0/src/asm/make_x86_64_sysv_elf_gas.S) |
+
+先读普通保存路径：不定义 `BOOST_USE_TSX`；SysV 对照先排除影子栈、ILP32，
+TLS guard 分支单独标注。实际构建若启用其他宏，必须先看预处理输出再推偏移。
+`.asm` 是文件后缀，不代表 Intel/MASM 语法；这里 `ms_pe_gas.asm` 的内容是 GAS/AT&T。
+本文不复制整份实现，直接在上游源码旁做自己的逐行笔记。
+
+## 1. 开讲拆分
+
+| 顺序 | 这次只解决一个问题 | 交什么后停 |
+|---|---|---|
+| 1 | `transfer_t` 为何让 MS 参数整体后移 | C++ 签名→隐藏返回指针→`rcx/rdx/r8` 对照 |
+| 2 | 保存区每一块是什么 | 从所有 store/load 提取偏移、宽度、读写方 |
+| 3 | 换 `rsp` 后返回给谁 | A→B→A，分别标旧 fctx、目标 fctx、payload |
+| 4 | `make` 如何制造同一种恢复现场 | 从 `top` 算到 H、trampoline、用户入口，核对 shadow space |
+| 5 | 与自己的原语做差异表 | 区分必需 ABI、可选配置、运行时支持，不只数代码行 |
+
+SysV 对照放到主线之后。缺某项前置就回对应课，不在本课重讲完整指令表。
+
+---
+
+## 2. 接口：fctx 到底指谁
+
+阅读接口定义：[detail/fcontext.hpp](https://github.com/boostorg/context/blob/boost-1.86.0/include/boost/context/detail/fcontext.hpp)。
+需要识别的类型形状：
 
 ```cpp
-namespace boost { namespace context {
-
-typedef void* fcontext_t;                 // 本质就是"保存的 rsp"
-
+using fcontext_t = void*;     // 本实现中表示可恢复现场的地址；对使用者是 opaque handle
 struct transfer_t {
-    fcontext_t  fctx;                     // 目标上下文
-    void       *data;                     // 传给对方的指针
+    fcontext_t fctx;          // 刚刚切走的来源上下文，不是当前目标
+    void* data;              // 这次切换传来的 payload
 };
-
-transfer_t jump_fcontext(fcontext_t const to, void *vp);
-fcontext_t make_fcontext(void *sp, std::size_t size, void (*fn)(transfer_t));
-transfer_t ontop_fcontext(fcontext_t const to, void *vp, transfer_t (*fn)(transfer_t));
-
-}}
+// 只作接口阅读，不是课程作业实现
+transfer_t jump_fcontext(fcontext_t to, void* data);
 ```
 
-三个函数的分工：
+若 A 调用 `jump_fcontext(B, p)`：
 
-| 函数 | 干什么 | 对应本课程 |
+- **B 收到的** `fctx` 是刚保存的 A，`data` 是 p；
+- B 以后用这个 A 句柄切回，A 的旧调用才返回；
+- A 得到的是“切回它的那个执行流”的句柄与那次 payload，不是原调用的参数副本。
+
+不要把 `transfer_t.fctx` 注释成“目标上下文”，否则后续调度方向会全反。
+
+### 2.1 隐藏返回缓冲区改变了 MS 参数位置
+
+`transfer_t` 是两个 64 位指针，16 字节。普通 MS x64 不用 `rax+rdx` 返回该结构体，
+而由调用者分配缓冲区、传隐藏指针：
+
+| 逻辑项目 | MS x64 入口 | SysV LP64 入口 |
 |---|---|---|
-| `make_fcontext` | 在栈上伪造一个"首次进入"的帧 | Lesson 7 `init_ctx` |
-| `jump_fcontext` | 保存当前、切到目标，返回 `transfer_t` | Lesson 6 `ctx_switch` |
-| `ontop_fcontext` | 切到目标栈上**先执行一个函数**，再继续 | Lesson 8 的"在对方栈上做事" |
+| 隐藏结果缓冲区 | `rcx` | 本例不需要 |
+| `to` | `rdx` | `rdi` |
+| `data` | `r8` | `rsi` |
+| 返回结果 | 写缓冲区，`rax` 返回缓冲区地址 | `rax=fctx`，`rdx=data` |
+
+所以“Windows 切换参数在 rcx/rdx”只适用于我们自己的 `void ctx_switch(void**,void*)`，
+**不适用于这个带结构体返回的签名**。
+主线第一项练习：先独立写一个普通 C++ 16 字节结构体返回函数，观察 MinGW `-S`，
+再读汇编，不用源码注释猜 ABI。
 
 ---
 
-## 1. `jump_fcontext` 的骨架（去掉注释/CET 后约 40 行）
+## 3. MS 保存区：从实际偏移提取表
 
-来源：`jump_x86_64_sysv_elf_gas.S`（147 行，含大段注释和 CET 分支）。
+令 `S` 是 `jump_fcontext` 的入口 `rsp`。代码向下留 `0x118` 字节，
+因此 `H = S - 0x118` 是普通保存区起点。
+入口 `S%16=8`，`0x118%16=8`，所以 **H 为 16 对齐**。
 
-```asm
-jump_fcontext:
-    leaq  -0x40(%rsp), %rsp     # 往下留 64 字节保存区
-    stmxcsr  (%rsp)             # 保存 MXCSR
-    fnstcw   0x4(%rsp)          # 保存 x87 控制字
-    movq  %fs:0x28, %rcx        # 读 TLS 里的 stack guard
-    movq  %rcx, 0x8(%rsp)
-    movq  %r12, 0x10(%rsp)      # 保存 callee-saved
-    movq  %r13, 0x18(%rsp)
-    movq  %r14, 0x20(%rsp)
-    movq  %r15, 0x28(%rsp)
-    movq  %rbx, 0x30(%rsp)
-    movq  %rbp, 0x38(%rsp)
-    movq  %rsp, %rax            # 返回给调用者的 fcontext_t
+以下来自固定版本的普通路径；地址以 H 为基准：
 
-    movq  %rdi, %rsp            # 切到目标栈
-    movq  0x40(%rsp), %r8       # 取出对方的"返回地址"
-    ldmxcsr  (%rsp)             # 恢复 MXCSR
-    fldcw    0x4(%rsp)
-    movq  0x8(%rsp), %rdx       # 恢复 stack guard 到 TLS
-    movq  %rdx, %fs:0x28
-    movq  0x10(%rsp), %r12      # 恢复 callee-saved
-    ...
-    leaq  0x48(%rsp), %rsp      # 把栈恢复到"函数返回后"
-    movq  %rsi, %rdx            # transfer_t.data
-    movq  %rax, %rdi            # 第一个参数 = fctx
-    jmp   *%r8                  # 跳过去（不是 ret）
-```
-
-对照我们的 `ctx_switch`，差别一目了然：
-
-| 项目 | 我们 | boost | 为什么 |
-|---|---|---|---|
-| 保存区 | `push` 8 次 | 一次性 `sub` + `mov` | 布局固定，省指令、方便对齐 |
-| 跳转 | `ret` | `jmp *%r8` | CET 影子栈 |
-| flags | 不存 | 不存 | 协作式 |
-| MXCSR/x87 | 不存 | 存 | 控制位是 callee-saved |
-| stack guard | 不存 | 存 | 栈保护 canary 在 TLS |
-| 返回值 | 无 | `transfer_t`（`rax`+`rdx`） | 能顺带传一个指针 |
-| 影子栈 | 无 | `rstorssp`/`saveprevssp` | CET |
-
----
-
-## 2. `transfer_t` 怎么"返回"两个值
-
-SysV 的返回值约定：
-
-- 第一个返回值 `rax`；
-- 第二个（仅 128 位整型/结构体）`rdx`。
-
-`jump_fcontext` 返回 `transfer_t`（两个指针），所以：
-
-```
-rax = fctx（新上下文）
-rdx = data（调用时传进来的 vp）
-```
-
-而"切到目标之后"的第一次调用，两个值走的是**参数寄存器**：
-
-```
-rdi = fctx
-rsi = data
-```
-
-源码里的 `movq %rsi, %rdx; movq %rax, %rdi` 就是在做这个转换。
-**这就是为什么 `jump_fcontext` 的签名是 `transfer_t` 而不是 `void`** ——
-它同时是"切换"和"传参"。
-
----
-
-## 3. `make_fcontext`：和我们的 `init_ctx` 对得上
-
-```asm
-make_fcontext:                 # rdi=栈顶, rsi=大小, rdx=fn
-    movq  -0x8(%rdi), %r9      # CET 用
-    movq  %rdi, %rax
-    andq  $-16, %rax           # 栈顶向下对齐到 16
-    leaq  -0x48(%rax), %rax    # 留 72 字节保存区
-    movq  %rdx, 0x30(%rax)     # 存 fn
-    stmxcsr  (%rax)
-    fnstcw   0x4(%rax)
-    movq  %fs:0x28, %rcx
-    movq  %rcx, 0x8(%rax)      # 存 canary
-    leaq  trampoline(%rip), %rcx
-    movq  %rcx, 0x40(%rax)     # 首次进入的返回地址
-    ...
-    ret                        # 返回 fcontext_t（= rax）
-```
-
-对照 Lesson 7 的假帧：
-
-| | 我们 | boost |
+| 偏移/字节数 | 内容 | 为什么有它 |
 |---|---|---|
-| 栈顶对齐 | 数组 `alignas(16)` | `andq $-16` 强制对齐 |
-| 保存区 | 80 字节 | 72 字节 = mxcsr(0x0) + x87cw(0x4) + guard(0x8) + 6 个 GPR(0x10–0x38) + 返回地址(0x40) |
-| 入口 | 直接放 `fiber_a` | 放 `trampoline`，`fn` 另存 |
-| 为什么多一层 trampoline | —— | 要先把 `fn` 变成 `transfer_t` 参数、处理 CET |
-| 返回地址 | `fiber_exit` | `finish`（直接 `_exit`） |
+| `0x000 … 0x09f` / 160 | `xmm6 … xmm15`，每个 16 字节 | MS 非易失 SIMD；每个 `movaps` 地址要对齐 |
+| `0x0a0` / 4 | MXCSR | 保存浮点控制/状态的实现策略 |
+| `0x0a4` / 2 | x87 control word | 浮点控制环境 |
+| `0x0a6 … 0x0af` / 10 | 布局间隙 | 不当作有效状态解读 |
+| `0x0b0` / 8 | 上游称 fiber storage 的 TIB 字段 | 平台上下文状态，不等于全部 C++ TLS |
+| `0x0b8` / 8 | deallocation stack | Windows 栈管理相关状态 |
+| `0x0c0` / 8 | stack limit | 栈下界 |
+| `0x0c8` / 8 | stack base | 栈上界 |
+| `0x0d0/0x0d8/0x0e0/0x0e8` / 各 8 | `r12/r13/r14/r15` | 非易失 GPR |
+| `0x0f0/0x0f8/0x100/0x108` / 各 8 | `rdi/rsi/rbx/rbp` | 非易失 GPR |
+| `0x110` / 8 | 当前调用的隐藏结果缓冲区指针 | 恢复时必须写回这个调用者自己的缓冲区 |
+| `0x118` / 8 | 原 call 留下的返回地址 | 不在向下分配的 `0x118` 字节里；它原本就在 S |
 
-**注意**：boost 的 `make_fcontext` 不保存 `rsi/rdi`（SysV 上它们是 caller-saved），
-只存 6 个 callee-saved。这和我们"两套 ABI 并集存 8 个"的选择不同 ——
-boost 每个平台一份文件，不需要并集。
+检查表的办法：对每个保存 store，找到目标恢复 load；看**宽度**而不是只看偏移。
+`stmxcsr` 写 4 字节、`fnstcw` 写 2 字节，不要把每行都画成 8 字节寄存器槽。
+TEB/TIB 偏移是本实现的平台细节，不应未经文档/目标环境核查就复制进自己的通用库。
+
+### 3.1 切换之后，哪些值仍代表来源
+
+上游先把来源 H 放进 `r9`，再从 `rdx` 取目标 H 装入 `rsp`。
+这时同一条 `mov offset(%rsp), reg` 已在读取**目标现场**。
+最后读取目标保存的隐藏缓冲区地址：
+
+- 缓冲区 `[+0]` 写来源 `r9`，作为结果 `fctx`；
+- 缓冲区 `[+8]` 写此次 `r8`，作为结果 `data`；
+- `rax` 指向该缓冲区；`rcx` 也设为它，供首次用户入口的聚合参数传递使用；
+- 读取目标返回地址、把 `rsp` 推进到原 call 之后，再间接跳转。
+
+此时“指针指向谁”比指令名字重要：恢复了目标寄存器，不代表来源句柄也要改成目标。
 
 ---
 
-## 4. `ontop_fcontext`：在对方的栈上跑一下
+## 4. MS 首次构造：`0x150` 不是随手留的大空间
 
-语义：切到目标上下文，**先执行你给的函数**，再决定是继续还是切回。
+令 `T` 为向下取整到 16 字节边界的栈顶；`make_fcontext` 返回
+`H = T - 0x150`，即 336 字节初始区域。
+主体字段与上表对应，但几个恢复值为首次运行专门安排：
 
-用途：在目标 fiber 的栈上安全地做一件事（比如释放它的栈、读它的局部状态），
-做完再切回来。没有它，你只能在"当前栈"上操作，碰不到对方的栈。
+| 地址 | 初始用途 |
+|---|---|
+| `H+0x100` | 恢复到 `rbx` 的用户入口函数地址 |
+| `H+0x108` | 恢复到 `rbp` 的 finish 地址 |
+| `H+0x110` | 指向 `H+0x140` 的隐藏缓冲区地址 |
+| `H+0x118` | 首次恢复目标 trampoline |
+| `H+0x120 … H+0x13f` | 32 字节参数 home area |
+| `H+0x140 … H+0x14f` | 首次接收的 `transfer_t` |
+
+按恢复路径手算：
+
+1. 换栈与恢复完成，跳到 trampoline 时 `rsp=H+0x120`，为 **0 mod 16**。
+2. trampoline 压入 `rbp` 中的 finish 地址，`rsp=H+0x118`，为 **8 mod 16**。
+3. 跳到 `rbx` 中的用户函数，模拟普通入口；其 home slots 恰在
+   `[H+0x120,H+0x13f]`，没有越过 T。
+4. 用户函数的 `transfer_t` 参数是按 MS 聚合参数规则间接传入，地址在 `rcx`。
+5. 用户若返回，落到 finish。该低层实现最终调用 `_exit`，会结束进程，
+   **不是自动把任务标 DEAD 并回到我们的调度器**。
+
+高层 Boost.Context/Fiber 包装层负责其正常生命周期；不能把裸 `make_fcontext` 的
+finish 行为直接当成调度器销毁协议。自己的 trampoline 应遵循 Lesson 7 的明确完成路径。
 
 ---
 
-## 5. 那些"多余"的东西为什么必须有
+## 5. 再读 SysV 对照：不要混合两张偏移表
 
-| 代码 | 解决什么问题 | 没有会怎样 |
+不启用影子栈的 LP64 路径：`jump` 向下留 64 字节，原返回地址在 `+0x40`；
+`make` 留 `0x48`（72）字节，包括该首次恢复目标。
+
+| SysV 偏移 | 内容 |
+|---|---|
+| `+0x00` / 4，`+0x04` / 2 | MXCSR、x87 CW |
+| `+0x08` / 8 | 可选 TLS guard 槽，仅启用相关宏时读写 |
+| `+0x10/+0x18/+0x20/+0x28` | `r12/r13/r14/r15` |
+| `+0x30/+0x38` | `rbx/rbp`；make 中分别携带 fn/finish |
+| `+0x40` | 返回地址/首次 trampoline 目标 |
+
+SysV 的 16 字节双指针结果在 `rax/rdx`，首次用户参数在 `rdi/rsi`；
+没有 MS 的隐藏缓冲区与 32 字节 home area，也不要求保存 `rsi/rdi`。
+同线程最小切换并不自动需要替换 TLS guard；源码中的可选 guard 分支，
+不能被概括为“所有切栈都要改 canary”。
+
+固定偏移 + `mov` 便于布局控制，不证明比 push/pop 指令更少或更快；
+性能比较必须在相同保存能力下测量。
+
+## 6. CET、unwind、ontop：知道边界，不伪造能力
+
+- **CET**：MS 主线这份文件没有因为使用 jmp 就自动支持所有 CET。
+  SysV 的可选影子栈分支会改变现场与恢复协议，本文普通路径偏移不适用。
+  `jmp` 不能单独修好后续 ret 的影子栈匹配；也不要混淆 shadow stack 与 IBT。
+- **unwind**：看到 `.seh_proc` 或 `.cfi` 不代表可以把异常跨栈展开。
+  应看元数据实际描述了什么；本课程保持“错误在各自入口内收口”的边界。
+- **ontop_fcontext**：恢复目标栈后，先运行回调，再接续目标。
+  用于目标栈上的受控工作，但**不能释放正在执行回调的那根栈**。
+  高层销毁协议要切到另一根安全栈再释放；不能用“ontop 能释放目标栈”一句话略过所有权。
+- **TLS**：fiber-specific storage 是额外设施，不表示任意 `thread_local`、
+  `errno` 和全部运行时 TLS 都自动随 fiber 切换。
+
+## 7. 任务与验收
+
+| 任务 | 提交物 | 通过条件 |
 |---|---|---|
-| `stmxcsr`/`ldmxcsr` | MXCSR 的控制位（舍入、flush-to-zero）是 callee-saved | 两个 fiber 的浮点行为互相污染 |
-| `fnstcw`/`fldcw` | x87 控制字同理 | 同上 |
-| `%fs:0x28` guard | `-fstack-protector` 的 canary 在 TLS，切换要保证一致 | 跨切换后 canary 检查失败 |
-| `rstorssp`/`saveprevssp` | CET 影子栈 | `ret` 触发 `#CP`；`jmp` 也要恢复 SSP |
-| `_CET_ENDBR` | CET 的间接跳转目标标记 | 开了 CET 的机器上直接崩 |
-| `.cfi_undefined rip` | 告诉 unwinder"这里没有调用者" | 异常/调试回溯错乱 |
+| A：返回合同 | MinGW 的普通 C++ 16 字节结构体返回 `-S` + MS jump 参数图 | 识别隐藏 `rcx`、目标 `rdx`、payload `r8`；不是套我们原语签名 |
+| B：保存布局 | 自己从主线 store/load 整理的字段表 | 每个偏移/宽度对应；`0x118` 既是分配量也是入口返回地址偏移，能解释为何 |
+| C：首次进入 | `T→H→trampoline→fn→finish` 地址与余数账本 | home area/结果缓冲区都在界内；不混入 SysV 的 72 字节 |
+| D：能力差异 | 自己原语与主线实现的差异表 | 分开 GPR、SIMD、控制字、TEB、参数、退出、unwind、CET，不说“都是存 rsp” |
 
-**这一课最重要的一句话**：demo 和 boost 的差别，不在"切换逻辑"，在"可移植性和运行时契约"。
-切换逻辑 40 行就够；剩下的 100 行是给操作系统、调试器、安全机制看的。
+不要求复制 Boost 源码进仓库，不以背行数、抄注释评分。
+选做：给自己的切换原语增加单个 `void*` payload 返回，先自行规定 ABI 与首次进入协议；
+修改后重新执行 Lesson 7/8 的参数与生命周期测试。
 
----
+## 8. 本课自测与课程收束
 
-## 6. Windows 变体
+1. 为什么两参数 `jump_fcontext` 在 Windows 中要读 `rdx/r8`？
+2. A 切到 B，B 收到的 `transfer_t.fctx` 指谁？
+3. `0x118`、`0x120`、`0x150` 各代表哪一层地址账？
+4. MS 和 SysV 的 `transfer_t` 参数/返回分别在哪里？
+5. 为什么保存 8 个 GPR 不够，为什么使用 jmp 也不证明 CET 安全？
+6. 用户入口正常返回时，低层 finish 与调度器 DEAD 回收有何区别？
 
-boost 在 Windows 上有四份实现：
-
-```
-jump_x86_64_ms_pe_masm.asm     # MSVC 的 MASM
-jump_x86_64_ms_pe_gas.asm      # GAS（MinGW 用这个）
-jump_x86_64_ms_pe_clang_gas.S  # clang
-```
-
-差异：
-
-- 参数寄存器 `rcx/rdx`（不是 `rdi/rsi`）；
-- 调用前 32 字节 shadow space；
-- callee-saved 多 `rsi/rdi/xmm6–15`；
-- unwind 用 `.seh_*`；
-- 没有 `.note.GNU-stack`。
-
-**你在这台 MinGW 上对照时，读 `jump_x86_64_ms_pe_gas.asm`，不要读 ELF 版** ——
-寄存器名字和栈布局都不一样。
-
----
-
-## 7. 我们的 demo 与 boost 的差距（表）
-
-| 能力 | hello-switch | boost.context |
-|---|---|---|
-| 切换 | ✅ | ✅ |
-| 首次进入 | ✅ | ✅ |
-| 传参 | 手工塞槽位 | `transfer_t` |
-| 对齐 | ✅ | ✅ |
-| MXCSR/x87 | ❌ | ✅ |
-| canary | ❌ | ✅ |
-| CET | ❌ | ✅ |
-| 平台 | 一份宏 | 每平台一份 |
-| unwind | ❌ | 有 CFI |
-| 测试 | 打印 | 完整单测 |
-
----
-
-## 8. 任务
-
-### 任务 A：逐行注释
-
-把 `jump_x86_64_sysv_elf_gas.S` 的核心 40 行抄下来，每行写一句"为什么"。
-不许抄注释，用自己的话。
-
-### 任务 B：画栈布局
-
-画出 `make_fcontext` 返回的 `fcontext_t` 指向的那 72 字节，标出每个字段的偏移
-（`0x0` 到 `0x40`），并解释每个字段在 `jump_fcontext` 里被谁读。
-
-### 任务 C：补一个能力
-
-给我们的 `hello-switch` 加上 **`transfer_t` 式传参**（`ctx_switch` 返回一个 `void*`）。
-提示：SysV 返回值在 `rax`，第二个在 `rdx`；Windows 只有 `rax`。
-
-### 任务 D：问答
-
-1. 为什么 `jump_fcontext` 用 `jmp` 不用 `ret`？
-2. `transfer_t` 的两个字段分别走哪两个寄存器？
-3. `make_fcontext` 为什么要 `andq $-16`？
-4. MXCSR 不保存会出什么 bug？
-5. Windows 版和 ELF 版差哪几件事？
-
----
-
-## 9. 易错点
-
-1. 读 ELF 版却用在 Windows 上（寄存器全错）。
-2. 以为 `jump_fcontext` 是"调用"，其实它是"切走 + 返回"。
-3. 忘了 `transfer_t` 的第二个值在 `rdx`。
-4. 以为 boost 存了 flags（它没存）。
-5. 以为 `make_fcontext` 的 `size` 参数只是"建议"（它要求栈顶/大小都合法）。
-6. 忽略 CET：在开了 CET 的机器上 `ret` 切栈直接 `#CP`。
-
----
-
-## 10. 自测
-
-1. `fcontext_t` 本质是什么？
-2. `jump_fcontext` 保存了哪些寄存器？和 Lesson 3 的清单对得上吗？
-3. `transfer_t` 在"切走"和"进入"两个方向各走哪些寄存器？
-4. `make_fcontext` 的 72 字节里有什么？
-5. 为什么 boost 不保存 flags？
-6. 影子栈和普通栈的 `ret` 为什么要一致？
-
----
-
-## 11. 课程收束
-
-到这里，整条线闭合了：
-
-```
-约束/clobber → 栈与保存 → ABI → naked/.S → 切换 → 首次进入 → 调度器 → boost
-```
-
-你已经能从"一条 `asm` 该写什么"一路追到"`jump_fcontext` 为什么这么写"。
-剩下的不是新知识，是把每一课的**证据**（`-S`、`objdump`、运行结果）攒够。
+完成本课的标准是：能把自己的每个保存字段连回 ABI 条款，
+能把每个恢复地址连回一次真实调用或首次构造；
+**未提供编译/运行/反汇编证据的能力，继续标“未验证”**。课程进度不因教案补全而自动通过。

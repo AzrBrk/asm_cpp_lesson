@@ -19,7 +19,7 @@
 | 台阶 | 形态 | 谁管函数帧 | 谁管 ABI 边界 | 课程位置 |
 |---|---|---|---|---|
 | 1 | extended asm | 编译器 | 编译器 | Lesson 1–5 |
-| 2 | `naked` 函数 | 你 | 编译器（C++ 函数边界） | Lesson 5.5、6、7 |
+| 2 | `naked` 函数 | 你 | 你实现；编译器只按声明生成调用方 | Lesson 5.5、6、7 |
 | 3 | 独立 `.S`/`.asm` | 你 | 你 | Lesson 5.5、9 |
 
 **为什么必须走这个顺序**：台阶 1 学的约束/clobber/ABI，正是台阶 3 里要手工遵守的东西。
@@ -79,18 +79,19 @@
 | 课 | 必须看到的证据 |
 |---|---|
 | 1 | `/APP` 里外的指令、立即数编码字节 |
-| 2 | 漏 `"memory"` 的错值、`push`/`pop` 代价 |
-| 3 | 帧布局、红区、对齐填充 |
-| 4 | 多输出漏 `&` 的错值 |
+| 2 | 漏 `"memory"` 的 load 合并/重排证据、保存寄存器的代价 |
+| 3 | MS x64 帧布局、shadow space、对齐填充；红区仅作 SysV 对照 |
+| 4 | 逐输出读写时序；漏 `&` 时允许的危险分配，不强求某个错值 |
 | 5 | 参数偏移、隐藏指针、`%al` |
 | 5.5 | `nm` 符号、`objdump` 指令、`bt` 回溯 |
 | 6 | 切换前后 `rsp`、运行交替输出 |
-| 7 | 假帧 80 字节、参数 12345 |
+| 7 | 按平台推导假帧；入口参数、shadow space、退出前对齐 |
 | 8 | 不变量 `assert` 全过 |
 | 9 | 逐行注释、栈布局图 |
 
-**复现不了 ≠ 安全**：`&` 和 `"memory"` 能稳定复现错值，`"cc"` 不一定
-（见 [Lesson 2 §3.4](lesson02-clobber.md)）—— 这是 UB 的两种面孔。
+**复现不了 ≠ 安全**：`&` 和 `"memory"` 的错误是否显现取决于优化与分配。
+GCC 13 的 x86 后端还会隐式破坏条件码，不能把它解释成“漏 `"cc"` 只是暂时没炸”
+（见 [Lesson 2 §3.4](lesson02-clobber.md)）。
 
 横切的分类表在 [`inline-asm-ub.md`](inline-asm-ub.md)：L0 硬错误 / L1 GCC 契约 /
 L2 未指定 / L3 C++ UB。判断"这段 asm 是不是 UB"时先查那张表。
@@ -113,11 +114,79 @@ L2 未指定 / L3 C++ UB。判断"这段 asm 是不是 UB"时先查那张表。
 
 ## 7. 怎么用这套教案
 
-1. **先读教案**（手机上也行），不要求动手；
+1. **先读本节，不预习整课答案**（手机上也行），不要求立刻动手；
 2. 开讲时按"一次一个知识点"推进，讲完一个点做一个小任务；
 3. 每个任务都要贴 `-S`/`objdump`/运行结果，**没有证据不算过**；
 4. 评分：正确性 40% / ABI 30% / 性能 30%，≥ 80 通过；
 5. 卡住时给反例、给报错、指位置，**不给完整可编译实现**。
+
+### 7.1 每个知识点的闭环
+
+教案是备课材料，不是一次性讲稿。每次只执行下面一轮：
+
+**检查前置 → 解释一个概念 → 手算一个局部例子 → 做一个小任务 → 交证据 → 停。**
+
+先回答“编译器知道什么”，再回答“CPU 实际做什么”。不能用“运行一次正常”替代两者。
+每课新增的“开讲拆分”表规定停止点；未通过当前点，不进入下一行。
+`asm goto`、跨 ABI 对照、guard page、计时都是后置拓展，不阻塞主线。
+
+### 7.2 工具与证据：先确认你在编译哪个平台
+
+在 MinGW 终端运行；命令中的文件名按当前任务替换：
+
+```bash
+# 三项一起交：编译器版本、目标三元组、64 位指针所用目标
+g++ --version
+g++ -dumpmachine
+# 先生成 .s，再用 -c 真正经过汇编器；-S 成功不代表指令合法
+g++ -std=gnu++17 -O2 -Wall -Wextra -S main.cpp -o main.s
+g++ -std=gnu++17 -O2 -Wall -Wextra -c main.cpp -o main.o
+objdump -dr main.o
+# 链接并运行，记录 stdout、stderr 和退出码
+g++ -std=gnu++17 -O2 -Wall -Wextra main.cpp -o main.exe
+./main.exe
+```
+
+`objdump` / `nm` 用同一套 MinGW 工具链的版本；没有命令时先确认安装路径。
+MSYS2/Bash 中用 `echo $?` 取刚结束程序的退出码，PowerShell 用 `$LASTEXITCODE`。
+不要在运行与取退出码之间插别的命令。编译失败就停，不要运行上一次留下的 exe。
+
+| 工具/术语 | 初学时只需要知道什么 |
+|---|---|
+| `-S` | C++ → 汇编文本，检查模板替换和编译器搬运，不显示最终字节 |
+| `-c` | 编译并汇编 → 目标文件，尚未链接 |
+| `objdump -dr` | 指令字节 + 反汇编 + 重定位；默认 AT&T，不加 Intel 选项 |
+| `nm` | 符号名；`T` 是已定义代码符号，`U` 是仍待链接的引用 |
+| live（活值） | 后面还会读到的值；不是“寄存器当前非零” |
+| spill / reload | 寄存器值写到栈 / 再读回；看 asm 外的访存 |
+| ABI | 函数边界合同，不是 CPU 自动帮你存寄存器 |
+| trampoline | 把首次进入调整成正常函数调用的汇编跳板 |
+
+### 7.3 如何区分材料中的证据
+
+- **推导/示意**：允许某种分配、偏移怎么算；不是你机器的实测输出。
+- **历史实测**：旧教案保留的特定工具链结果；不保证你的版本复现相同寄存器或报错文本。
+- **本次提交证据**：完整命令、编译 stderr、运行 stdout/退出码、相关 `-S`/反汇编。
+  只有这一项能用来给你的作业评分。
+
+没有 Windows 运行条件时，只能标“MinGW 编译/反汇编已检查，运行未验证”。
+主线只要求你的 Windows x64 环境；Linux 对照可以读图，不要求额外搭一台机器。
+
+### 7.4 查证入口
+
+| 问题 | 主来源与阅读位置 |
+|---|---|
+| 约束、`volatile`、`&`、clobber | [GCC Extended Asm](https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html)，对应同名小节 |
+| 固定寄存器/立即数范围 | [GCC Machine Constraints](https://gcc.gnu.org/onlinedocs/gcc/Machine-Constraints.html)，x86 family |
+| `naked` 允许什么 | [GCC x86 Function Attributes](https://gcc.gnu.org/onlinedocs/gcc/x86-Function-Attributes.html)，`naked` |
+| MS 参数/返回/浮点保存 | [Microsoft x64 calling convention](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention)，Parameter passing / Return values / MXCSR |
+| shadow space / 栈边界 | [Microsoft x64 stack usage](https://learn.microsoft.com/en-us/cpp/build/stack-usage) |
+| SysV 对照 | [x86-64 psABI](https://gitlab.com/x86-psABIs/x86-64-ABI)，寄存器、栈、参数分类章节 |
+| 指令语义/flags/异常 | [Intel SDM](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)，Vol.2 对应指令的 Operation / Flags Affected / Exceptions |
+
+官网不可访问时可查官方仓库：[GCC 文档源码](https://github.com/gcc-mirror/gcc/blob/releases/gcc-13/gcc/doc/extend.texi)、
+[Microsoft 文档源码](https://github.com/MicrosoftDocs/cpp-docs/blob/main/docs/build/x64-calling-convention.md)。
+编码长度必须带具体操作数用 `objdump` 验证；某条指令的周期数不能从字节数推出来。
 
 ---
 
@@ -126,9 +195,9 @@ L2 未指定 / L3 C++ UB。判断"这段 asm 是不是 UB"时先查那张表。
 | 课 | 教案 | 开讲 | 任务 |
 |---|---|---|---|
 | 1 | ✅ 已补讲 | ✅ 已通过（88） | ✅ 完成 |
-| 2 | ✅ v2 | ⬜ 未开始 | ⬜ 未开始 |
-| 3–9 | ✅ v1 | ⬜ 未开始 | ⬜ 未开始 |
-| 5.5 | ✅ 新增 | ⬜ 未开始 | ⬜ 未开始 |
+| 2 | ✅ 已补学习闭环并勘误 | ⬜ 未开始 | ⬜ 未开始 |
+| 3–9 | ✅ 已补推导、任务验收与平台边界 | ⬜ 未开始 | ⬜ 未开始 |
+| 5.5 | ✅ 已补工具链与调用边界 | ⬜ 未开始 | ⬜ 未开始 |
 | demo | ✅ hello-switch | — | 可观摩 |
 
 教案是"材料"，不是"讲稿"：开讲时仍然一次只讲一个知识点，讲完停下来等代码。
