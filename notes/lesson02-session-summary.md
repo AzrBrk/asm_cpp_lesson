@@ -1,5 +1,9 @@
 # Lesson 2 学习总结与交接（截至 2026-11-07）
 
+> **2026-11-09 结课：** Lesson 2 整课评分 89（正确性 88 / ABI 90 / 性能 88），已通过。
+> 本文的"唯一待答题"和停点全部作废，最新状态见 [progress.md](../progress.md)。
+
+
 ## 新 session 从这里开始
 
 - 先读本文件、[进度](../progress.md) 和 [第二课源码](../lessons/lesson02/main.cpp)。

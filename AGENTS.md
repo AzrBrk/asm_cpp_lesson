@@ -95,13 +95,13 @@ lessons/lessonNN/main.cpp     每课作业的定稿
 | 课 | 状态 | 最佳分 |
 |---|---|---|
 | Lesson 1 — Extended Asm 基本语法与约束符 | ✅ 通过（4 次尝试） | 88（90 / 85 / 88） |
-| Lesson 2 — Clobber List：`memory` 屏障与 `cc` | 🟡 四个主线知识点已完成，栈/调用 ABI 边界收尾中，整课未验收 | — |
+| Lesson 2 — Clobber List：`memory` 屏障与 `cc` | ✅ 通过（1 次整课评分） | 89（88 / 90 / 88） |
 | Lesson 3–9 + 5.5 桥 | 📝 已补推导、任务验收与平台边界，未开讲 | — |
 
-**下一步（2026-11-07 停点）**：先读 [`notes/lesson02-session-summary.md`](notes/lesson02-session-summary.md)，
-从尚未回答的 r10 / rbx 调用保存责任题继续。不要重讲已完成的 rsp 寻址、无红区、
-shadow space 与调用前对齐。学习者主动暂停；恢复时先等其回答当前题，不直接给答案。
-教案已补前置检查、逐点停止位置、任务验收和查证入口。
+**下一步（2026-11-09 结课点）**：Lesson 2 已通过，整课评分 89（88 / 90 / 88）。
+下一课 Lesson 3，先读 [`notes/lesson03-stack-registers.md`](notes/lesson03-stack-registers.md)；
+历史停点材料 [`notes/lesson02-session-summary.md`](notes/lesson02-session-summary.md) 已作废，
+只作记录。继续按"一次一个知识点、先讲后考、只认编译/运行/`-S` 证据"推进。
 `rdtsc` 不写 EFLAGS；GCC x86 的隐式 flags clobber 见 Lesson 2 §3.4，
 不再要求复现“漏 cc 错码”。历史 demo 不是 Windows ABI 安全参考，先读其 README 勘误。
 开讲时仍然一次只讲一个知识点（教案是材料，不是讲稿）。

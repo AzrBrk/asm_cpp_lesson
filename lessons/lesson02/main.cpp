@@ -69,6 +69,23 @@ __attribute__((noinline)) uint64_t rdtsc_asm(){
     return (uint64_t(hi) << 32) | lo;
 }
 
+int g = 9;
+__attribute__((noinline)) int loop_without_memory_barrier(int n){
+    int result = 0;
+    for(int i = 0; i < n; ++i){
+        result += g;
+    }
+    return result;
+}
+__attribute__((noinline)) int loop_with_memory_barrier(int n){
+    int result = 0;
+    for(int i = 0; i < n; ++i){
+        __asm__ volatile("":::"memory");
+        result += g;
+    }
+    return result;
+}
+
 int main(){
     int a = 1;
     std::printf("bad_store output: %d\n", bad_store(&a));
@@ -85,4 +102,6 @@ int main(){
 
     std::printf("rdtsc_asm output: %016llX\n", rdtsc_asm());
 
+    std::printf("loop without memory barrier, with 5 times: %d\n", loop_without_memory_barrier(5) );
+    std::printf("loop with memory barrier, with 5 times: %d\n", loop_with_memory_barrier(5) );
 }
